@@ -99,8 +99,9 @@ end try
     }
     
     if (!newPhotoFound) {
-        console.log("Could not verify that a photo was saved. The camera might require permission or the process was interrupted.");
+        throw new Error("Could not verify that a photo was saved. The camera might require permission or the process was interrupted.");
     }
+    return true;
 }
 
 function openApp(appName) {

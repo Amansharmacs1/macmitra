@@ -1,6 +1,6 @@
-# MacMitra (Phase 1)
+# MacMitra
 
-MacMitra is a local CLI tool to automate actions on your Mac, built as the first phase before integrating with WhatsApp and Gemini.
+MacMitra is a local tool to automate actions on your Mac, controllable via a local CLI (Phase 1) and WhatsApp Cloud API (Phase 2).
 
 ## Requirements
 - macOS
@@ -9,58 +9,86 @@ MacMitra is a local CLI tool to automate actions on your Mac, built as the first
 ## Setup
 
 1. **Install dependencies:**
-   \`\`\`bash
+   ```bash
    npm install
-   \`\`\`
+   ```
 
 2. **Configure environment:**
-   Copy the example environment file and add your YouTube API Key:
-   \`\`\`bash
+   Copy the example environment file and add your credentials:
+   ```bash
    cp .env.example .env
-   \`\`\`
-   Edit \`.env\` and replace \`your_api_key_here\` with a valid YouTube Data API v3 key.
+   ```
+   Edit `.env` and fill in your YouTube API key and Meta API credentials.
 
-3. **Make the CLI executable (optional):**
-   \`\`\`bash
-   chmod +x cli.js
-   \`\`\`
+## WhatsApp Cloud API Setup (Phase 2)
 
-## Example Commands
+1. **Create a Meta App:**
+   - Go to [Meta for Developers](https://developers.facebook.com/) and create an app with "Other" > "Business".
+   - Add the **WhatsApp** product.
+   
+2. **Retrieve Credentials:**
+   - Go to WhatsApp > API Setup. Note the **Temporary Access Token** (or create a permanent one) and the **Phone Number ID** (not the phone number itself).
+   - Go to App Settings > Basic. Note the **App Secret**.
+   
+3. **Configure Environment:**
+   Update your `.env` file:
+   ```bash
+   WA_APP_SECRET=your_app_secret
+   WA_VERIFY_TOKEN=make_up_a_custom_token
+   WA_PHONE_NUMBER_ID=your_phone_number_id
+   WA_ACCESS_TOKEN=your_access_token
+   OWNER_WA_ID=your_number_with_country_code # e.g. 15551234567
+   ```
+
+4. **Expose Local Server:**
+   - Start the local server:
+     ```bash
+     node server.js
+     ```
+   - Use an HTTPS tunnel to expose it (e.g. ngrok):
+     ```bash
+     ngrok http 3000
+     ```
+
+5. **Configure Webhook in Meta:**
+   - Go to WhatsApp > Configuration.
+   - Edit Webhook.
+   - Enter your ngrok HTTPS URL + `/webhook` (e.g. `https://your-ngrok.ngrok-free.app/webhook`).
+   - Enter the `WA_VERIFY_TOKEN` you created in your `.env`.
+   - Click "Verify and Save".
+   - Under "Webhook fields", subscribe to the `messages` event.
+
+6. **Test with a real message:**
+   Send a WhatsApp message from your `OWNER_WA_ID` number to the test number provided in the Meta API Setup page.
+   Try sending: `status` or `take a photo`.
+
+## Example CLI Commands
 
 - **Check status:**
-  \`\`\`bash
+  ```bash
   node cli.js status
-  \`\`\`
-  Confirms the local agent is working.
-
+  ```
 - **Play a song:**
-  \`\`\`bash
+  ```bash
   node cli.js play bohemian rhapsody
-  \`\`\`
-  Searches for the song on YouTube and opens the first video result.
-  *(Note: Browser autoplay policies might prevent the video from playing automatically.)*
-
+  ```
 - **Take a photo:**
-  \`\`\`bash
+  ```bash
   node cli.js take-photo
-  \`\`\`
-  Opens Photo Booth and triggers the shutter. You may need to grant Accessibility permissions to Terminal/Node, and Camera permissions to Photo Booth. The script will try to verify if the photo was saved successfully.
-
+  ```
 - **Open an app:**
-  \`\`\`bash
+  ```bash
   node cli.js open-app Calculator
-  \`\`\`
-  Opens an application from the explicitly allowed list (e.g., Notes, Calculator, Calendar, Safari, Music, Photo Booth, Maps, Weather).
-
+  ```
 - **Open a URL:**
-  \`\`\`bash
+  ```bash
   node cli.js open-url https://en.wikipedia.org/wiki/Main_Page
-  \`\`\`
-  Opens the provided HTTPS URL in the default browser.
+  ```
 
 ## Known Limits
+- **WhatsApp Testing:** Free test numbers have strict 24-hour windows and you must send a message to the test number first.
 - **YouTube Autoplay:** Depending on your browser's strict autoplay policies, the opened YouTube video might be paused by default and require a click to play.
-- **Permissions:** \`take-photo\` uses AppleScript and System Events, which requires explicit Accessibility permissions for your terminal application (e.g., Terminal, iTerm, VS Code). If it fails, macOS might prompt you, or you may need to manually add your terminal in System Settings -> Privacy & Security -> Accessibility. Photo Booth itself also requires Camera access.
-- **Verifying Photo Save:** The \`take-photo\` action verifies a photo was saved by looking for new files in \`~/Pictures/Photo Booth Library/Pictures\`. Depending on system speed, the 3-second countdown plus save time might occasionally cause the polling script to miss it if it takes longer than 10 seconds.
-- **App Allowlist:** Only a hardcoded list of harmless applications can be opened via \`open-app\`.
-- **URL Restriction:** Only \`https://\` URLs are allowed via \`open-url\`.
+- **Permissions:** `take-photo` uses AppleScript and System Events, which requires explicit Accessibility permissions for your terminal application. Photo Booth itself also requires Camera access.
+- **Verifying Photo Save:** The `take-photo` action verifies a photo was saved by polling `~/Pictures/Photo Booth Library/Pictures` for 10 seconds.
+- **App Allowlist:** Only a hardcoded list of harmless applications can be opened via `open-app` / `open <app>`.
+- **URL Restriction:** Only `https://` URLs are allowed via `open-url` / `open <url>`.
