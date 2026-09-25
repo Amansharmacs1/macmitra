@@ -1,19 +1,22 @@
 {
   "processedMessages": {
-    "gemini6": {
-      "id": "gemini6",
+    "gemini_remind": {
+      "id": "gemini_remind",
       "from": "98765",
-      "text": "Take a picture using my Mac camera",
+      "text": "remind me to buy groceries",
       "status": "success",
-      "timestamp": 1790341079046
-    },
-    "gemini7": {
-      "id": "gemini7",
-      "from": "98765",
-      "text": "confirm 8871",
-      "status": "success",
-      "timestamp": 1790341092790
+      "timestamp": 1790358046307
     }
   },
-  "pendingConfirmations": {}
+  "pendingConfirmations": {
+    "98765": {
+      "code": "2729",
+      "action": "create-reminder",
+      "args": {
+        "title": "buy groceries",
+        "datetime": ""
+      },
+      "timestamp": 1790358044967
+    }
+  }
 }

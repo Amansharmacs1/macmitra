@@ -80,7 +80,7 @@ end try
 
     console.log("Triggered Photo Booth shutter (waiting for countdown to complete)...");
     
-    let newPhotoFound = false;
+    let newPhotoPath = null;
     for (let i = 0; i < 10; i++) {
         await new Promise(r => setTimeout(r, 1000));
         try {
@@ -89,7 +89,7 @@ end try
                 const newFiles = afterFiles.filter(f => !beforeFiles.includes(f));
                 if (newFiles.length > 0) {
                     console.log(`Photo verified saved: ${newFiles[0]}`);
-                    newPhotoFound = true;
+                    newPhotoPath = path.join(pbPicturesDir, newFiles[0]);
                     break;
                 }
             }
@@ -98,10 +98,47 @@ end try
         }
     }
     
-    if (!newPhotoFound) {
+    if (!newPhotoPath) {
         throw new Error("Could not verify that a photo was saved. The camera might require permission or the process was interrupted.");
     }
-    return true;
+    return newPhotoPath;
+}
+
+function takeScreenshot() {
+  const screenshotsDir = path.join(__dirname, 'screenshots');
+  if (!fs.existsSync(screenshotsDir)) {
+    fs.mkdirSync(screenshotsDir, { recursive: true });
+  }
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const filepath = path.join(screenshotsDir, `screenshot_${timestamp}.png`);
+  
+  const result = runCommand('screencapture', ['-x', filepath]);
+  if (result.status !== 0 || result.error || !fs.existsSync(filepath)) {
+    throw new Error(`Failed to take screenshot: ${result.stderr || (result.error && result.error.message) || 'File not created'}`);
+  }
+  return filepath;
+}
+
+function createReminder(title, datetime) {
+  // datetime should be a valid string format that AppleScript can parse, e.g., "9/26/2026 14:00"
+  // If datetime is empty, it makes a generic reminder
+  let script = `tell application "Reminders"\n`;
+  script += `  set newReminder to make new reminder with properties {name:"${title.replace(/"/g, '\\"')}"}\n`;
+  if (datetime) {
+    script += `  try\n`;
+    script += `    set remindDate to date "${datetime}"\n`;
+    script += `    set due date of newReminder to remindDate\n`;
+    script += `  on error\n`;
+    script += `    error "Could not parse date/time. Reminders expects system-locale date format."\n`;
+    script += `  end try\n`;
+  }
+  script += `end tell\n`;
+  
+  const result = runCommand('osascript', ['-e', script]);
+  if (result.status !== 0 || result.error || (result.stderr && result.stderr.includes('error'))) {
+    throw new Error(`Failed to create reminder: ${result.stderr || (result.error && result.error.message)}`);
+  }
+  return true;
 }
 
 function openApp(appName) {
@@ -124,10 +161,34 @@ function status() {
   console.log("Local agent is working. System ready.");
 }
 
+function setVolume(level) {
+  const vol = parseInt(level, 10);
+  if (isNaN(vol) || vol < 0 || vol > 100) {
+    throw new Error('Volume must be a number between 0 and 100.');
+  }
+  const result = runCommand('osascript', ['-e', `set volume output volume ${vol}`]);
+  if (result.status !== 0 || result.error) throw new Error('Failed to set volume.');
+}
+
+function mute() {
+  const result = runCommand('osascript', ['-e', 'set volume with output muted']);
+  if (result.status !== 0 || result.error) throw new Error('Failed to mute volume.');
+}
+
+function unmute() {
+  const result = runCommand('osascript', ['-e', 'set volume without output muted']);
+  if (result.status !== 0 || result.error) throw new Error('Failed to unmute volume.');
+}
+
 module.exports = {
   play,
   takePhoto,
+  takeScreenshot,
+  createReminder,
   openApp,
   openUrl,
-  status
+  status,
+  setVolume,
+  mute,
+  unmute
 };

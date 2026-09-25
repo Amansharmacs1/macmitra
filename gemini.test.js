@@ -139,3 +139,35 @@ test('Gemini Fallback: Confirmation after Gemini photo request', async (t) => {
   // Verify confirmation is gone and action executed
   assert.strictEqual(!!store.getPendingConfirmation('98765'), false);
 });
+
+test('Gemini Fallback: Volume control', async (t) => {
+  t.mock.method(gemini, 'interpretCommand', async (text) => {
+    return { command: 'volume', args: '50' };
+  });
+
+  const body = makePayload('set volume to 50', 'gemini_vol');
+  const sig = generateSignature(body, process.env.WA_APP_SECRET);
+  
+  await request(app).post('/webhook').set('x-hub-signature-256', sig).set('Content-Type', 'application/json').send(body);
+  await drainQueue();
+  
+  const m = store.getProcessedMessage('gemini_vol');
+  assert.strictEqual(m.status, 'success');
+});
+
+test('Gemini Fallback: Create reminder', async (t) => {
+  t.mock.method(gemini, 'interpretCommand', async (text) => {
+    return { command: 'create-reminder', args: { title: 'buy groceries', datetime: '10/10/2026 10:00' } };
+  });
+
+  const body = makePayload('remind me to buy groceries', 'gemini_remind');
+  const sig = generateSignature(body, process.env.WA_APP_SECRET);
+  
+  await request(app).post('/webhook').set('x-hub-signature-256', sig).set('Content-Type', 'application/json').send(body);
+  await drainQueue();
+  
+  assert.strictEqual(!!store.getPendingConfirmation('98765'), true);
+  const conf = store.getPendingConfirmation('98765');
+  assert.strictEqual(conf.action, 'create-reminder');
+  assert.strictEqual(conf.args.title, 'buy groceries');
+});

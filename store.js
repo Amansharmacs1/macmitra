@@ -51,8 +51,8 @@ function getPendingConfirmation(from) {
   return state.pendingConfirmations[from];
 }
 
-function setPendingConfirmation(from, code, action, timestamp = Date.now()) {
-  state.pendingConfirmations[from] = { code, action, timestamp };
+function setPendingConfirmation(from, code, action, args = null, timestamp = Date.now()) {
+  state.pendingConfirmations[from] = { code, action, args, timestamp };
   saveState();
 }
 

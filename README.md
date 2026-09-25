@@ -118,16 +118,26 @@ MacMitra supports both **Direct Commands** (faster, strictly matched) and **Gemi
 ### Direct Commands
 - `status`
 - `play <song>`
-- `take a photo` (Requires a 2-minute `confirm <code>` reply)
+- `take a photo` (Requires a 2-minute `confirm <code>` reply, returns image)
+- `screenshot` (Requires confirmation, returns image)
+- `volume <0-100|mute|unmute>`
+- `remind me to <title>` (Requires confirmation)
 - `open <app>` (e.g. `open Safari`)
 - `open <https://url>`
 - `help`
 
-### Gemini Commands (Phase 3)
+### Gemini Commands (Phase 3 & 5)
 - *"Can you play Kesariya on my Mac?"* -> Maps to `play Kesariya`
 - *"Safari khol do"* -> Maps to `open Safari`
-- *"Take a picture using my Mac camera"* -> Maps to `take-photo`
+- *"Take a picture using my Mac camera"* -> Maps to `take-photo` (with image response)
+- *"Grab my screen"* -> Maps to `take-screenshot` (with image response)
+- *"Remind me to buy milk tomorrow at 10 AM"* -> Maps to `create-reminder`
+- *"Mute the audio"* -> Maps to `volume mute`
 
 ## Known Limits
 - **App Allowlist & URLs:** Only a hardcoded list of harmless applications (`Notes`, `Safari`, `Calculator`, etc.) and `https://` URLs are allowed.
 - **Photo Save Check:** The `take-photo` action verifies a photo was saved by polling `~/Pictures/Photo Booth Library/Pictures` for 10 seconds.
+- **Permissions Required:** 
+  - `take-screenshot` requires **Screen Recording** permissions for Terminal/Node.
+  - `create-reminder` requires **Reminders** permissions.
+  - `take-photo` requires **Camera** access for Photo Booth, and **Accessibility** access for Terminal/Node.

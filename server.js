@@ -1,6 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
-const { play, takePhoto, openApp, openUrl, status } = require('./actions');
+const { play, takePhoto, takeScreenshot, createReminder, openApp, openUrl, status, setVolume, mute, unmute } = require('./actions');
+const { sendWhatsAppImage } = require('./whatsappMedia');
 const { validateApp, validateUrl } = require('./validation');
 const store = require('./store');
 const logger = require('./logger');
@@ -214,7 +215,7 @@ async function handleCommand(msgId, from, text) {
         const parts = lower.split(' ');
         if (parts[1] === confirmation.code) {
            store.deletePendingConfirmation(from);
-           await executeAction(from, confirmation.action);
+           await executeAction(from, confirmation.action, confirmation.args);
            return;
         } else {
            await sendWhatsAppReply(from, 'Invalid confirmation code.');
@@ -233,7 +234,7 @@ async function handleCommand(msgId, from, text) {
   if (lowerText === 'status') {
      await sendWhatsAppReply(from, 'Local agent is working. System ready.');
   } else if (lowerText === 'help') {
-     await sendWhatsAppReply(from, 'Commands: status, play <song>, open <app>, open <url>, take a photo, help');
+     await sendWhatsAppReply(from, 'Commands: status, play <song>, open <app>, open <url>, take a photo, screenshot, volume <0-100|mute|unmute>, remind me to <title>, help');
   } else if (lowerText.startsWith('play ')) {
      const song = text.substring(5).trim();
      try {
@@ -246,6 +247,25 @@ async function handleCommand(msgId, from, text) {
      const code = generateCode();
      store.setPendingConfirmation(from, code, 'take-photo');
      await sendWhatsAppReply(from, `Action: Take a Photo using Photo Booth.\nReply with "confirm ${code}" within 2 minutes to execute, or "cancel" to abort.`);
+  } else if (lowerText === 'screenshot' || lowerText === 'take screenshot' || lowerText === 'take a screenshot') {
+     const code = generateCode();
+     store.setPendingConfirmation(from, code, 'take-screenshot');
+     await sendWhatsAppReply(from, `Action: Take a screenshot.\nReply with "confirm ${code}" within 2 minutes to execute, or "cancel" to abort.`);
+  } else if (lowerText.startsWith('volume ')) {
+     const level = lowerText.substring(7).trim();
+     try {
+       if (level === 'mute') mute();
+       else if (level === 'unmute') unmute();
+       else setVolume(level);
+       await sendWhatsAppReply(from, `Volume set to ${level}.`);
+     } catch (e) {
+       await sendWhatsAppReply(from, `Error setting volume: ${e.message}`);
+     }
+  } else if (lowerText.startsWith('remind me to ')) {
+     const title = text.substring(13).trim();
+     const code = generateCode();
+     store.setPendingConfirmation(from, code, 'create-reminder', { title, datetime: '' });
+     await sendWhatsAppReply(from, `Action: Create reminder "${title}".\nReply with "confirm ${code}" within 2 minutes to execute, or "cancel" to abort.`);
   } else if (lowerText.startsWith('open ')) {
      const target = text.substring(5).trim();
      if (target.startsWith('https://')) {
@@ -291,6 +311,26 @@ async function handleCommand(msgId, from, text) {
           const code = generateCode();
           store.setPendingConfirmation(from, code, 'take-photo');
           await sendWhatsAppReply(from, `Action: Take a Photo using Photo Booth.\nReply with "confirm ${code}" within 2 minutes to execute, or "cancel" to abort.`);
+       } else if (aiResult.command === 'take-screenshot') {
+          const code = generateCode();
+          store.setPendingConfirmation(from, code, 'take-screenshot');
+          await sendWhatsAppReply(from, `Action: Take a screenshot.\nReply with "confirm ${code}" within 2 minutes to execute, or "cancel" to abort.`);
+       } else if (aiResult.command === 'volume') {
+          if (!aiResult.args) throw new Error('Missing args for volume');
+          try {
+            const level = aiResult.args;
+            if (level === 'mute') mute();
+            else if (level === 'unmute') unmute();
+            else setVolume(level);
+            await sendWhatsAppReply(from, `Volume set to ${level}.`);
+          } catch (e) {
+            await sendWhatsAppReply(from, `Error setting volume: ${e.message}`);
+          }
+       } else if (aiResult.command === 'create-reminder') {
+          if (!aiResult.args || !aiResult.args.title) throw new Error('Missing title for reminder');
+          const code = generateCode();
+          store.setPendingConfirmation(from, code, 'create-reminder', aiResult.args);
+          await sendWhatsAppReply(from, `Action: Create reminder "${aiResult.args.title}"${aiResult.args.datetime ? ' at ' + aiResult.args.datetime : ''}.\nReply with "confirm ${code}" within 2 minutes to execute, or "cancel" to abort.`);
        } else if (aiResult.command === 'open-app') {
           if (!aiResult.args) throw new Error('Missing args for open-app');
           if (validateApp(aiResult.args)) {
@@ -327,13 +367,29 @@ async function handleCommand(msgId, from, text) {
   }
 }
 
-async function executeAction(from, action) {
+async function executeAction(from, action, args = null) {
   if (action === 'take-photo') {
     try {
-      await takePhoto();
-      await sendWhatsAppReply(from, 'Photo successfully taken and verified.');
+      const imagePath = await takePhoto();
+      await sendWhatsAppReply(from, 'Photo successfully taken. Uploading...');
+      await sendWhatsAppImage(from, imagePath);
     } catch (e) {
       await sendWhatsAppReply(from, `Error taking photo: ${e.message}`);
+    }
+  } else if (action === 'take-screenshot') {
+    try {
+      const imagePath = await takeScreenshot();
+      await sendWhatsAppReply(from, 'Screenshot successfully taken. Uploading...');
+      await sendWhatsAppImage(from, imagePath);
+    } catch (e) {
+      await sendWhatsAppReply(from, `Error taking screenshot: ${e.message}`);
+    }
+  } else if (action === 'create-reminder') {
+    try {
+      createReminder(args.title, args.datetime);
+      await sendWhatsAppReply(from, `Reminder created: "${args.title}"${args.datetime ? ' at ' + args.datetime : ''}`);
+    } catch (e) {
+      await sendWhatsAppReply(from, `Error creating reminder: ${e.message}`);
     }
   }
 }
