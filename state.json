@@ -1,0 +1,19 @@
+{
+  "processedMessages": {
+    "gemini6": {
+      "id": "gemini6",
+      "from": "98765",
+      "text": "Take a picture using my Mac camera",
+      "status": "success",
+      "timestamp": 1790341079046
+    },
+    "gemini7": {
+      "id": "gemini7",
+      "from": "98765",
+      "text": "confirm 8871",
+      "status": "success",
+      "timestamp": 1790341092790
+    }
+  },
+  "pendingConfirmations": {}
+}

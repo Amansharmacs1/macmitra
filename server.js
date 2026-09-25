@@ -2,6 +2,8 @@ const express = require('express');
 const crypto = require('crypto');
 const { play, takePhoto, openApp, openUrl, status } = require('./actions');
 const { validateApp, validateUrl } = require('./validation');
+const store = require('./store');
+const logger = require('./logger');
 require('dotenv').config();
 
 const app = express();
@@ -11,9 +13,6 @@ const VERIFY_TOKEN = process.env.WA_VERIFY_TOKEN;
 const WA_PHONE_NUMBER_ID = process.env.WA_PHONE_NUMBER_ID;
 const OWNER_WA_ID = process.env.OWNER_WA_ID;
 const WA_ACCESS_TOKEN = process.env.WA_ACCESS_TOKEN;
-
-const processedMessages = new Set();
-const pendingConfirmations = new Map();
 
 // Capture raw body for signature verification
 app.use(express.json({
@@ -37,44 +36,97 @@ app.get('/webhook', (req, res) => {
   return res.sendStatus(400);
 });
 
-async function sendWhatsAppReply(to, text) {
-  if (!WA_ACCESS_TOKEN || !WA_PHONE_NUMBER_ID) {
-    console.error('Missing WA_ACCESS_TOKEN or WA_PHONE_NUMBER_ID');
-    return false;
-  }
+// Phase 4: Health check endpoint
+app.get('/health', (req, res) => {
+  const waConfigured = !!(APP_SECRET && VERIFY_TOKEN && WA_PHONE_NUMBER_ID && WA_ACCESS_TOKEN && OWNER_WA_ID);
+  
+  let macReady = false;
   try {
-    const res = await fetch(`https://graph.facebook.com/v17.0/${WA_PHONE_NUMBER_ID}/messages`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${WA_ACCESS_TOKEN}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to: to,
-        type: 'text',
-        text: { body: text }
-      })
-    });
-    if (!res.ok) {
-        const errorText = await res.text();
-        console.error('WhatsApp API Error:', errorText);
-        return false;
-    }
-    return true;
-  } catch (err) {
-    console.error('WhatsApp request failed:', err);
+    const result = require('child_process').spawnSync('osascript', ['-e', 'tell application "System Events" to return true'], { timeout: 2000 });
+    macReady = result.status === 0;
+  } catch (e) {
+    // Ignore error
+  }
+
+  res.json({
+    server: 'running',
+    whatsapp: waConfigured ? 'configured' : 'missing_credentials',
+    mac_permissions: macReady ? 'ready' : 'not_ready'
+  });
+});
+
+async function sendWhatsAppReply(to, text, retries = 3) {
+  if (!WA_ACCESS_TOKEN || !WA_PHONE_NUMBER_ID) {
+    logger.error('Missing WA_ACCESS_TOKEN or WA_PHONE_NUMBER_ID');
     return false;
   }
+  
+  const maxRetries = process.env.NODE_ENV === 'test' ? 1 : retries;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const res = await fetch(`https://graph.facebook.com/v17.0/${WA_PHONE_NUMBER_ID}/messages`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${WA_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          to: to,
+          type: 'text',
+          text: { body: text }
+        })
+      });
+      if (res.ok) {
+        return true;
+      }
+      const errorText = await res.text();
+      logger.error(`WhatsApp API Error (Attempt ${i + 1}):`, errorText);
+    } catch (err) {
+      logger.error(`WhatsApp request failed (Attempt ${i + 1}):`, err);
+    }
+    // Exponential backoff
+    await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i)));
+  }
+  return false;
 }
 
 function generateCode() {
   return Math.floor(1000 + Math.random() * 9000).toString();
 }
 
-app.post('/webhook', async (req, res) => {
+let isProcessingQueue = false;
+
+async function processQueue() {
+  if (isProcessingQueue) return;
+  isProcessingQueue = true;
+
+  try {
+    let pendingTasks = store.getPendingMessages();
+    while (pendingTasks.length > 0) {
+      const task = pendingTasks[0];
+      logger.info(`Processing task`, { id: task.id, from: task.from });
+      
+      try {
+        await handleCommand(task.id, task.from, task.text);
+        store.setProcessedMessage(task.id, { status: 'success' });
+        logger.info(`Task completed`, { id: task.id });
+      } catch (err) {
+        logger.error(`Task failed`, err, { id: task.id });
+        store.setProcessedMessage(task.id, { status: 'failed', result: err.message });
+      }
+      
+      // Re-fetch in case new tasks arrived
+      pendingTasks = store.getPendingMessages();
+    }
+  } finally {
+    isProcessingQueue = false;
+  }
+}
+
+app.post('/webhook', (req, res) => {
   if (!APP_SECRET) {
-    console.error('WA_APP_SECRET is not configured');
+    logger.error('WA_APP_SECRET is not configured');
     return res.sendStatus(500);
   }
 
@@ -94,17 +146,15 @@ app.post('/webhook', async (req, res) => {
     return res.sendStatus(404);
   }
 
+  let tasksAdded = false;
+
   const entries = body.entry || [];
   for (const entry of entries) {
     const changes = entry.changes || [];
     for (const change of changes) {
       const value = change.value;
-      if (!value) continue;
+      if (!value || !value.messages) continue;
       
-      // Filter out events that aren't messages (e.g. status updates)
-      if (!value.messages) continue;
-      
-      // Ensure the message was sent to the configured phone number
       if (value.metadata && value.metadata.phone_number_id !== WA_PHONE_NUMBER_ID) {
         continue;
       }
@@ -113,41 +163,57 @@ app.post('/webhook', async (req, res) => {
         if (message.type !== 'text') continue;
 
         const messageId = message.id;
-        // Deduplicate messages
-        if (processedMessages.has(messageId)) {
+        
+        // Deduplicate messages across restarts
+        const existing = store.getProcessedMessage(messageId);
+        if (existing) {
+          logger.info(`Skipping duplicate webhook`, { id: messageId });
           continue;
         }
-        processedMessages.add(messageId);
 
         const from = message.from;
         if (from !== OWNER_WA_ID) {
-          // Ignore messages from unauthorized senders completely
+          logger.info(`Ignoring unauthorized sender`, { from });
           continue;
         }
 
         const text = message.text.body.trim();
-        await handleCommand(from, text);
+        
+        // Save to store as pending
+        store.setProcessedMessage(messageId, {
+          id: messageId,
+          from: from,
+          text: text,
+          status: 'pending'
+        });
+        tasksAdded = true;
       }
     }
   }
 
+  // Phase 4: Acknowledge valid webhooks promptly
   res.sendStatus(200);
+
+  if (tasksAdded) {
+    // Process queue asynchronously
+    processQueue();
+  }
 });
 
-async function handleCommand(from, text) {
+async function handleCommand(msgId, from, text) {
   // Process pending confirmation
-  if (pendingConfirmations.has(from)) {
-    const confirmation = pendingConfirmations.get(from);
+  const confirmation = store.getPendingConfirmation(from);
+  if (confirmation) {
+    // Phase 4: Expiry logic for persistency
     if (Date.now() - confirmation.timestamp > 120000) {
-      pendingConfirmations.delete(from);
-      // Expired. Fall through to standard command parsing or notify user.
+      store.deletePendingConfirmation(from);
       await sendWhatsAppReply(from, 'Previous confirmation code expired.');
     } else {
       const lower = text.toLowerCase();
       if (lower.startsWith('confirm')) {
         const parts = lower.split(' ');
         if (parts[1] === confirmation.code) {
-           pendingConfirmations.delete(from);
+           store.deletePendingConfirmation(from);
            await executeAction(from, confirmation.action);
            return;
         } else {
@@ -155,7 +221,7 @@ async function handleCommand(from, text) {
            return;
         }
       } else if (lower === 'cancel') {
-        pendingConfirmations.delete(from);
+        store.deletePendingConfirmation(from);
         await sendWhatsAppReply(from, 'Action cancelled.');
         return;
       }
@@ -178,7 +244,7 @@ async function handleCommand(from, text) {
      }
   } else if (lowerText === 'take a photo' || lowerText === 'take photo' || lowerText === 'take-photo') {
      const code = generateCode();
-     pendingConfirmations.set(from, { code, action: 'take-photo', timestamp: Date.now() });
+     store.setPendingConfirmation(from, code, 'take-photo');
      await sendWhatsAppReply(from, `Action: Take a Photo using Photo Booth.\nReply with "confirm ${code}" within 2 minutes to execute, or "cancel" to abort.`);
   } else if (lowerText.startsWith('open ')) {
      const target = text.substring(5).trim();
@@ -223,7 +289,7 @@ async function handleCommand(from, text) {
           }
        } else if (aiResult.command === 'take-photo') {
           const code = generateCode();
-          pendingConfirmations.set(from, { code, action: 'take-photo', timestamp: Date.now() });
+          store.setPendingConfirmation(from, code, 'take-photo');
           await sendWhatsAppReply(from, `Action: Take a Photo using Photo Booth.\nReply with "confirm ${code}" within 2 minutes to execute, or "cancel" to abort.`);
        } else if (aiResult.command === 'open-app') {
           if (!aiResult.args) throw new Error('Missing args for open-app');
@@ -255,7 +321,7 @@ async function handleCommand(from, text) {
           await sendWhatsAppReply(from, 'Unknown command derived from AI. Send "help" for a list of commands.');
        }
      } catch (err) {
-       console.error('Gemini interpretation failed:', err);
+       logger.error('Gemini interpretation failed:', err);
        await sendWhatsAppReply(from, 'Unknown command and AI interpretation failed. Send "help" for a list of commands.');
      }
   }
@@ -272,12 +338,14 @@ async function executeAction(from, action) {
   }
 }
 
-// Ensure the module exports the app and the maps for testing purposes
-module.exports = { app, processedMessages, pendingConfirmations };
+module.exports = { app, processQueue };
 
+// If started directly
 if (require.main === module) {
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => {
-    console.log(`Server listening on port ${PORT}`);
+    logger.info(`Server listening on port ${PORT}`);
+    // Recover queued tasks from state on startup
+    processQueue();
   });
 }

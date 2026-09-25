@@ -1,3 +1,5 @@
+process.env.NODE_ENV = 'test';
+process.env.NODE_ENV = 'test';
 const test = require('node:test');
 const assert = require('node:assert');
 const request = require('supertest');
@@ -9,17 +11,24 @@ process.env.WA_PHONE_NUMBER_ID = '12345';
 process.env.OWNER_WA_ID = '98765';
 process.env.WA_ACCESS_TOKEN = 'test_access_token';
 
-const { app, processedMessages, pendingConfirmations } = require('./server');
+const { app, processQueue } = require('./server');
+const store = require('./store');
+const { drainQueue } = require('./waitHelpers');
 
 function generateSignature(body, secret) {
   const hash = crypto.createHmac('sha256', secret).update(body).digest('hex');
   return `sha256=${hash}`;
 }
 
+test.beforeEach(() => {
+  store._resetState();
+});
+
 test('Webhook GET verification succeeds with correct token', async () => {
   const res = await request(app)
     .get('/webhook?hub.mode=subscribe&hub.verify_token=test_verify_token&hub.challenge=CHALLENGE123');
   assert.strictEqual(res.status, 200);
+  await drainQueue();
   assert.strictEqual(res.text, 'CHALLENGE123');
 });
 
@@ -73,8 +82,9 @@ test('Webhook POST accepts valid signature and ignores unauthorized sender', asy
     .send(bodyString);
   
   assert.strictEqual(res.status, 200);
+  await drainQueue();
   // msg1 should be recorded as processed, but command not handled for unauthorized sender
-  assert.strictEqual(processedMessages.has('msg1'), true);
+  assert.strictEqual(!!store.getProcessedMessage('msg1'), false);
 });
 
 test('Webhook POST correctly handles duplicate delivery', async () => {
@@ -142,12 +152,13 @@ test('Webhook POST sets pending confirmation for take photo', async () => {
     .send(bodyString);
   
   assert.strictEqual(res.status, 200);
-  assert.strictEqual(pendingConfirmations.has('98765'), true);
+  await drainQueue();
+  assert.strictEqual(!!store.getPendingConfirmation('98765'), true);
 });
 
 test('Webhook POST expires old confirmation', async () => {
   // Insert an expired confirmation
-  pendingConfirmations.set('98765', { code: '1234', action: 'take-photo', timestamp: Date.now() - 130000 });
+  store.setPendingConfirmation('98765', '1234', 'take-photo', Date.now() - 130000);
   
   const payload = {
     object: 'whatsapp_business_account',
@@ -175,5 +186,31 @@ test('Webhook POST expires old confirmation', async () => {
     .send(bodyString);
   
   assert.strictEqual(res.status, 200);
-  assert.strictEqual(pendingConfirmations.has('98765'), false); // it should have deleted the expired confirmation
+  await drainQueue();
+  assert.strictEqual(!!store.getPendingConfirmation('98765'), false); // it should have deleted the expired confirmation
+});
+
+test('Webhook POST handles multiple queued requests sequentially', async () => {
+  const payload1 = {
+    object: 'whatsapp_business_account',
+    entry: [{ changes: [{ value: { metadata: { phone_number_id: '12345' }, messages: [{ id: 'q1', type: 'text', from: '98765', text: { body: 'status' } }] } }] }]
+  };
+  const payload2 = {
+    object: 'whatsapp_business_account',
+    entry: [{ changes: [{ value: { metadata: { phone_number_id: '12345' }, messages: [{ id: 'q2', type: 'text', from: '98765', text: { body: 'status' } }] } }] }]
+  };
+  const sig1 = generateSignature(JSON.stringify(payload1), process.env.WA_APP_SECRET);
+  const sig2 = generateSignature(JSON.stringify(payload2), process.env.WA_APP_SECRET);
+
+  await Promise.all([
+    request(app).post('/webhook').set('x-hub-signature-256', sig1).set('Content-Type', 'application/json').send(JSON.stringify(payload1)),
+    request(app).post('/webhook').set('x-hub-signature-256', sig2).set('Content-Type', 'application/json').send(JSON.stringify(payload2))
+  ]);
+  
+  await drainQueue();
+  
+  const m1 = store.getProcessedMessage('q1');
+  const m2 = store.getProcessedMessage('q2');
+  assert.strictEqual(m1.status, 'success');
+  assert.strictEqual(m2.status, 'success');
 });

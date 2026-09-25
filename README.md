@@ -65,53 +65,69 @@ MacMitra is a local tool to automate actions on your Mac, controllable via a loc
    Send a WhatsApp message from your `OWNER_WA_ID` number to the test number provided in the Meta API Setup page.
    Try sending: `status` or `take a photo`.
 
-## Example WhatsApp Commands
+## Mac Deployment & LaunchAgent (Phase 4)
 
+To keep MacMitra running automatically in the background and recovering from crashes, we deploy it as a macOS LaunchAgent.
+*Note: Camera and UI actions (like opening apps) strictly require an active, logged-in desktop session.*
+
+1. **Prepare the Plist File:**
+   Edit the included `com.macmitra.plist` file.
+   - Replace `REPLACE_WITH_YOUR_MACMITRA_PATH` with your absolute path (e.g., `/Users/amansharma/Desktop/MacMitra`).
+   - If your `node` path is different (find via `which node`), update `/usr/local/bin/node` to the correct path (e.g., `/opt/homebrew/bin/node`).
+
+2. **Install the LaunchAgent:**
+   ```bash
+   cp com.macmitra.plist ~/Library/LaunchAgents/
+   launchctl load ~/Library/LaunchAgents/com.macmitra.plist
+   ```
+   *To stop or uninstall:*
+   ```bash
+   launchctl unload ~/Library/LaunchAgents/com.macmitra.plist
+   ```
+
+3. **Check Logs:**
+   Logs are securely redacted to hide your phone number, API keys, and message contents.
+   ```bash
+   tail -f macmitra.log
+   tail -f macmitra.error.log
+   ```
+
+4. **Health Check:**
+   You can verify your configuration locally without exposing secrets:
+   ```bash
+   curl http://localhost:3000/health
+   ```
+
+## Troubleshooting & Permissions
+- **Mac Action Permissions Not Ready:** If `/health` reports permissions are not ready, you need to grant **Accessibility** permissions. Go to `System Settings > Privacy & Security > Accessibility` and add your Terminal (or `node`). `take-photo` will require **Camera** permissions for Photo Booth.
+- **WhatsApp Errors:** If the logs show "Invalid OAuth access token", verify your `WA_ACCESS_TOKEN` is current (test tokens expire every 24h).
+- **Missed Commands:** Phase 4 stores states in `state.json`. If a webhook arrives while your Mac is offline, Meta retries it. Once your Mac turns on, MacMitra queues the webhooks sequentially and never repeats completed tasks. 
+
+## End-to-End Checklist
+- [ ] Dependencies installed (`npm install`).
+- [ ] `.env` filled with YouTube, Meta, and Gemini keys.
+- [ ] `node server.js` runs without crashing.
+- [ ] Local `curl http://localhost:3000/health` returns `running` and `configured`.
+- [ ] Ngrok tunnel active and configured in Meta Webhooks.
+- [ ] LaunchAgent loaded.
+- [ ] Tested sending "status" from your authorized WhatsApp number.
+
+## Example WhatsApp Commands
 MacMitra supports both **Direct Commands** (faster, strictly matched) and **Gemini-Interpreted Commands** (natural language, multilingual).
 
-### Direct Commands (Phase 1 & 2)
-If your message strictly matches these, it bypasses Gemini for instant execution:
+### Direct Commands
 - `status`
-- `play <song>` (e.g. `play Kesariya`)
+- `play <song>`
 - `take a photo` (Requires a 2-minute `confirm <code>` reply)
 - `open <app>` (e.g. `open Safari`)
 - `open <https://url>`
 - `help`
 
 ### Gemini Commands (Phase 3)
-If a message isn't a direct command, Gemini interprets your intent securely. The resulting action is still validated against the strict local rules.
 - *"Can you play Kesariya on my Mac?"* -> Maps to `play Kesariya`
 - *"Safari khol do"* -> Maps to `open Safari`
-- *"Take a picture using my Mac camera"* -> Maps to `take-photo` (still strictly requires you to reply `confirm <code>` to the generated prompt)
-- *"Delete all files"* -> Maps to `unsupported` and safely rejected.
-
-## Example CLI Commands
-
-- **Check status:**
-  ```bash
-  node cli.js status
-  ```
-- **Play a song:**
-  ```bash
-  node cli.js play bohemian rhapsody
-  ```
-- **Take a photo:**
-  ```bash
-  node cli.js take-photo
-  ```
-- **Open an app:**
-  ```bash
-  node cli.js open-app Calculator
-  ```
-- **Open a URL:**
-  ```bash
-  node cli.js open-url https://en.wikipedia.org/wiki/Main_Page
-  ```
+- *"Take a picture using my Mac camera"* -> Maps to `take-photo`
 
 ## Known Limits
-- **WhatsApp Testing:** Free test numbers have strict 24-hour windows and you must send a message to the test number first.
-- **YouTube Autoplay:** Depending on your browser's strict autoplay policies, the opened YouTube video might be paused by default and require a click to play.
-- **Permissions:** `take-photo` uses AppleScript and System Events, which requires explicit Accessibility permissions for your terminal application. Photo Booth itself also requires Camera access.
-- **Verifying Photo Save:** The `take-photo` action verifies a photo was saved by polling `~/Pictures/Photo Booth Library/Pictures` for 10 seconds.
-- **App Allowlist:** Only a hardcoded list of harmless applications can be opened via `open-app` / `open <app>`.
-- **URL Restriction:** Only `https://` URLs are allowed via `open-url` / `open <url>`.
+- **App Allowlist & URLs:** Only a hardcoded list of harmless applications (`Notes`, `Safari`, `Calculator`, etc.) and `https://` URLs are allowed.
+- **Photo Save Check:** The `take-photo` action verifies a photo was saved by polling `~/Pictures/Photo Booth Library/Pictures` for 10 seconds.
