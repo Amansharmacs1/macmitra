@@ -206,7 +206,58 @@ async function handleCommand(from, text) {
        }
      }
   } else {
-     await sendWhatsAppReply(from, 'Unknown command. Send "help" for a list of commands.');
+     // Phase 3: Fallback to Gemini
+     try {
+       const { interpretCommand } = require('./gemini');
+       const aiResult = await interpretCommand(text);
+       
+       if (aiResult.command === 'status') {
+          await sendWhatsAppReply(from, 'Local agent is working. System ready.');
+       } else if (aiResult.command === 'play') {
+          if (!aiResult.args) throw new Error('Missing args for play');
+          try {
+            await play(aiResult.args);
+            await sendWhatsAppReply(from, `Playing ${aiResult.args} on YouTube.`);
+          } catch (e) {
+            await sendWhatsAppReply(from, `Error playing song: ${e.message}`);
+          }
+       } else if (aiResult.command === 'take-photo') {
+          const code = generateCode();
+          pendingConfirmations.set(from, { code, action: 'take-photo', timestamp: Date.now() });
+          await sendWhatsAppReply(from, `Action: Take a Photo using Photo Booth.\nReply with "confirm ${code}" within 2 minutes to execute, or "cancel" to abort.`);
+       } else if (aiResult.command === 'open-app') {
+          if (!aiResult.args) throw new Error('Missing args for open-app');
+          if (validateApp(aiResult.args)) {
+            try {
+              openApp(aiResult.args);
+              await sendWhatsAppReply(from, `Opened app: ${aiResult.args}`);
+            } catch (e) {
+              await sendWhatsAppReply(from, `Error opening app: ${e.message}`);
+            }
+          } else {
+            await sendWhatsAppReply(from, `App '${aiResult.args}' is not in the allowlist.`);
+          }
+       } else if (aiResult.command === 'open-url') {
+          if (!aiResult.args) throw new Error('Missing args for open-url');
+          if (validateUrl(aiResult.args)) {
+            try {
+              openUrl(aiResult.args);
+              await sendWhatsAppReply(from, `Opened URL: ${aiResult.args}`);
+            } catch (e) {
+              await sendWhatsAppReply(from, `Error opening URL: ${e.message}`);
+            }
+          } else {
+            await sendWhatsAppReply(from, 'Invalid URL. Only HTTPS is supported.');
+          }
+       } else if (aiResult.command === 'unsupported') {
+          await sendWhatsAppReply(from, `Unsupported: ${aiResult.reason || 'I cannot do that.'}`);
+       } else {
+          await sendWhatsAppReply(from, 'Unknown command derived from AI. Send "help" for a list of commands.');
+       }
+     } catch (err) {
+       console.error('Gemini interpretation failed:', err);
+       await sendWhatsAppReply(from, 'Unknown command and AI interpretation failed. Send "help" for a list of commands.');
+     }
   }
 }
 

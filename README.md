@@ -18,7 +18,10 @@ MacMitra is a local tool to automate actions on your Mac, controllable via a loc
    ```bash
    cp .env.example .env
    ```
-   Edit `.env` and fill in your YouTube API key and Meta API credentials.
+   Edit `.env` and fill in your keys:
+   - **YouTube API Key**: Get it from Google Cloud Console.
+   - **Gemini API Key (Phase 3)**: Go to [Google AI Studio](https://aistudio.google.com/), click "Get API key", create one, and paste it as `GEMINI_API_KEY`. (Your key stays securely on your Mac and is never logged or exposed).
+   - **Meta API Credentials**: See WhatsApp setup below.
 
 ## WhatsApp Cloud API Setup (Phase 2)
 
@@ -61,6 +64,26 @@ MacMitra is a local tool to automate actions on your Mac, controllable via a loc
 6. **Test with a real message:**
    Send a WhatsApp message from your `OWNER_WA_ID` number to the test number provided in the Meta API Setup page.
    Try sending: `status` or `take a photo`.
+
+## Example WhatsApp Commands
+
+MacMitra supports both **Direct Commands** (faster, strictly matched) and **Gemini-Interpreted Commands** (natural language, multilingual).
+
+### Direct Commands (Phase 1 & 2)
+If your message strictly matches these, it bypasses Gemini for instant execution:
+- `status`
+- `play <song>` (e.g. `play Kesariya`)
+- `take a photo` (Requires a 2-minute `confirm <code>` reply)
+- `open <app>` (e.g. `open Safari`)
+- `open <https://url>`
+- `help`
+
+### Gemini Commands (Phase 3)
+If a message isn't a direct command, Gemini interprets your intent securely. The resulting action is still validated against the strict local rules.
+- *"Can you play Kesariya on my Mac?"* -> Maps to `play Kesariya`
+- *"Safari khol do"* -> Maps to `open Safari`
+- *"Take a picture using my Mac camera"* -> Maps to `take-photo` (still strictly requires you to reply `confirm <code>` to the generated prompt)
+- *"Delete all files"* -> Maps to `unsupported` and safely rejected.
 
 ## Example CLI Commands
 
